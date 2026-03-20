@@ -1,0 +1,73 @@
+name: Publish Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v1.0.0)"
+        required: true
+        type: string
+      release_notes:
+        description: "Release notes / changelog for this version"
+        required: false
+        type: string
+        default: ""
+      prerelease:
+        description: "Mark as pre-release"
+        required: false
+        type: boolean
+        default: false
+  repository_dispatch:
+    types: [publish-release]
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve inputs
+        id: inputs
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WD_VERSION: ${{ inputs.version }}
+          WD_PRERELEASE: ${{ inputs.prerelease }}
+          WD_NOTES: ${{ inputs.release_notes }}
+          RD_VERSION: ${{ github.event.client_payload.version }}
+          RD_PRERELEASE: ${{ github.event.client_payload.prerelease }}
+          RD_NOTES: ${{ github.event.client_payload.release_notes }}
+        run: |
+          if [ "$EVENT_NAME" = "repository_dispatch" ]; then
+            echo "version=$RD_VERSION" >> "$GITHUB_OUTPUT"
+            echo "prerelease=${RD_PRERELEASE:-false}" >> "$GITHUB_OUTPUT"
+            printf '%s' "$RD_NOTES" > /tmp/release_notes.md
+          else
+            echo "version=$WD_VERSION" >> "$GITHUB_OUTPUT"
+            echo "prerelease=$WD_PRERELEASE" >> "$GITHUB_OUTPUT"
+            printf '%s' "$WD_NOTES" > /tmp/release_notes.md
+          fi
+
+      - name: Download build artifacts
+        if: github.event_name == 'repository_dispatch' && github.event.client_payload.run_id != ''
+        uses: actions/download-artifact@v4.1.8
+        with:
+          run-id: ${{ github.event.client_payload.run_id }}
+          github-token: ${{ secrets.ARTIFACTS_TOKEN || secrets.GITHUB_TOKEN }}
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.inputs.outputs.version }}
+          name: "Rustic Studio ${{ steps.inputs.outputs.version }}"
+          body_path: /tmp/release_notes.md
+          prerelease: ${{ steps.inputs.outputs.prerelease }}
+          files: artifacts/**/*
+          fail_on_unmatched_files: false
+          make_latest: true
